@@ -1,0 +1,9 @@
+<Solution>
+  <Project Path="Circlimate.Api/Circlimate.Api.csproj" />
+  <Project Path="Circlimate.AppHost/Circlimate.AppHost.csproj" />
+  <Project Path="Circlimate.Blazor/Circlimate.Blazor.csproj" />
+  <Project Path="Circlimate.Core.Tests/Circlimate.Core.Tests.csproj" />
+  <Project Path="Circlimate.Core/Circlimate.Core.csproj" />
+  <Project Path="Circlimate.Data/Circlimate.Data.csproj" />
+  <Project Path="Circlimate.ServiceDefaults/Circlimate.ServiceDefaults.csproj" />
+</Solution>
