@@ -1,228 +1,310 @@
 @page "/"
-@inject HttpClient Http
+@rendermode InteractiveServer
 
 <PageTitle>Circlimate</PageTitle>
 
-<div class="container mt-4">
-    <h1>Temperature Circular Chart</h1>
+<style>
+    body, html {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+    }
 
-    <div class="row mb-3">
-        <div class="col-md-4">
-            <label for="cityInput" class="form-label">City</label>
-            <input id="cityInput" type="text" class="form-control" @bind="city" @bind:event="oninput" placeholder="Enter city name" />
-        </div>
-        <div class="col-md-2">
-            <label class="form-label">&nbsp;</label>
-            <button class="btn btn-primary w-100" @onclick="LoadData" disabled="@isLoading">
-                @if (isLoading)
-                {
-                    <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                    <span>Loading...</span>
-                }
-                else
-                {
-                    <span>Load Data</span>
-                }
-            </button>
+    .page-container {
+        min-height: 100vh;
+        background: linear-gradient(180deg, #B3E5FC 0%, #0277BD 100%);
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .chart-container {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 2rem;
+        overflow: hidden;
+    }
+
+    .chart-wrapper {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: calc(100vh - 180px);
+        max-height: calc(100vh - 180px);
+    }
+
+    .chart-wrapper svg {
+        width: auto;
+        height: 100%;
+        max-height: 100%;
+    }
+
+    .metadata-panel {
+        flex: 0 0 250px;
+        background: rgba(255, 255, 255, 0.9);
+        border-radius: 8px;
+        padding: 1.5rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        align-self: center;
+    }
+
+    .metadata-panel h5 {
+        margin-top: 0;
+        color: #0277BD;
+        border-bottom: 2px solid #0277BD;
+        padding-bottom: 0.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .metadata-panel p {
+        margin-bottom: 0.75rem;
+        font-size: 0.9rem;
+    }
+
+    .controls-bar {
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 8px;
+        padding: 1rem;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        margin-bottom: 1rem;
+    }
+
+    @@keyframes drawPath {
+        to {
+            stroke-dashoffset: 0;
+        }
+    }
+
+    .temp-path {
+        stroke-dasharray: 5000;
+        stroke-dashoffset: 5000;
+        animation: drawPath 3s ease-out forwards;
+    }
+
+    .temp-path-max {
+        animation-delay: 0s;
+    }
+
+    .temp-path-min {
+        animation-delay: 0s;
+    }
+
+    @@keyframes bounceIn {
+        0% {
+            transform: scale(0);
+            opacity: 0;
+        }
+        50% {
+            transform: scale(1.15);
+        }
+        65% {
+            transform: scale(0.95);
+        }
+        80% {
+            transform: scale(1.05);
+        }
+        100% {
+            transform: scale(1);
+            opacity: 1;
+        }
+    }
+
+    .year-text {
+        animation: bounceIn 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards;
+        transform-origin: center;
+        transform-box: fill-box;
+    }
+
+    @@keyframes spin {
+        0% {
+            transform: rotate(0deg);
+        }
+        100% {
+            transform: rotate(360deg);
+        }
+    }
+
+    .loading-spinner {
+        animation: spin 1s linear infinite;
+        transform-origin: center;
+        transform-box: fill-box;
+    }
+</style>
+
+<div class="page-container">
+    <div class="controls-bar">
+        <div class="row align-items-end g-2">
+            <div class="col-md-4">
+                <label for="cityInput" class="form-label mb-1">City</label>
+                <input id="cityInput" type="text" class="form-control" @bind="city" @bind:event="oninput" placeholder="Enter city name" />
+            </div>
+            <div class="col-md-2">
+                <button class="btn btn-primary w-100" @onclick="LoadData" disabled="@isLoading">
+                    @if (isLoading)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                        <span>Loading...</span>
+                    }
+                    else
+                    {
+                        <span>Load Data</span>
+                    }
+                </button>
+            </div>
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="col-12">
+                    <div class="alert alert-danger mb-0" role="alert">
+                        @errorMessage
+                    </div>
+                </div>
+            }
         </div>
     </div>
 
-    @if (!string.IsNullOrEmpty(errorMessage))
-    {
-        <div class="alert alert-danger" role="alert">
-            @errorMessage
-        </div>
-    }
-
-    @if (temperatureData != null && temperatureData.Any())
-    {
-        <div class="row">
-            <div class="col-12">
-                <svg width="800" height="800" viewBox="0 0 800 800" style="border: 1px solid #ccc; background: #f8f9fa;">
-                    @* Center point *@
-                    <circle cx="400" cy="400" r="2" fill="black" />
-
-                    @* Temperature circles (grid lines) *@
-                    @for (int temp = -20; temp <= 40; temp += 10)
-                    {
-                        var radius = MapTemperatureToRadius(temp);
-                        <circle cx="400" cy="400" r="@radius" fill="none" stroke="#ddd" stroke-width="1" />
-                        <g>
-                            <text x="405" y="@(400 - radius + 5)" font-size="12" fill="#666">@(temp)°C</text>
-                        </g>
-                    }
-
-                    @* Month markers *@
-                    @for (int month = 1; month <= 12; month++)
-                    {
-                        var date = new DateTime(DateTime.Now.Year, month, 1);
-                        var dayOfYear = date.DayOfYear;
-                        var angle = (dayOfYear / 365.0 * 360.0 - 90) * Math.PI / 180.0; // -90 to start at top
-                        var x1 = 400 + Math.Cos(angle) * MaxRadius;
-                        var y1 = 400 + Math.Sin(angle) * MaxRadius;
-                        var x2 = 400 + Math.Cos(angle) * (MaxRadius + 15);
-                        var y2 = 400 + Math.Sin(angle) * (MaxRadius + 15);
-
-                        <line x1="@x1" y1="@y1" x2="@x2" y2="@y2" stroke="#666" stroke-width="2" />
-
-                        var textX = 400 + Math.Cos(angle) * (MaxRadius + 30);
-                        var textY = 400 + Math.Sin(angle) * (MaxRadius + 30);
-                        <g>
-                            <text x="@textX" y="@textY" font-size="14" text-anchor="middle" dominant-baseline="middle" fill="#333">
-                                @date.ToString("MMM")
-                            </text>
-                        </g>
-                    }
-
-                    @* Temperature data points - max temperature *@
-                    <path d="@GenerateMaxTempPath()" fill="none" stroke="red" stroke-width="2" opacity="0.7" />
-
-                    @* Temperature data points - min temperature *@
-                    <path d="@GenerateMinTempPath()" fill="none" stroke="blue" stroke-width="2" opacity="0.7" />
-
-                    @* Legend *@
-                    <g transform="translate(650, 50)">
-                        <rect x="0" y="0" width="140" height="60" fill="white" stroke="#ccc" stroke-width="1" />
-                        <line x1="10" y1="20" x2="40" y2="20" stroke="red" stroke-width="2" />
-                        <g><text x="45" y="24" font-size="12" fill="#333">Max Temp</text></g>
-                        <line x1="10" y1="40" x2="40" y2="40" stroke="blue" stroke-width="2" />
-                        <g><text x="45" y="44" font-size="12" fill="#333">Min Temp</text></g>
+    <div class="chart-container">
+        <div class="chart-wrapper">
+            <svg viewBox="0 0 800 800" preserveAspectRatio="xMidYMid meet" style="background: rgba(255, 255, 255, 0.95); border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);">
+                @* Temperature circles (grid lines) - always visible *@
+                @for (int temp = -20; temp <= 40; temp += 10)
+                {
+                    var radius = MapTemperatureToRadius(temp);
+                    <circle cx="400" cy="400" r="@radius" fill="none" stroke="#ddd" stroke-width="1" />
+                    <g>
+                        <text x="405" y="@(400 - radius + 5)" font-size="12" fill="#666">@(temp)°C</text>
                     </g>
-                </svg>
+                }
+
+                @* Month markers - always visible *@
+                @for (int month = 1; month <= 12; month++)
+                {
+                    var date = new DateTime(DateTime.Now.Year, month, 1);
+                    var dayOfYear = date.DayOfYear;
+                    var angle = (dayOfYear / 365.0 * 360.0 - 90) * Math.PI / 180.0; // -90 to start at top
+                    var x1 = 400 + Math.Cos(angle) * MaxRadius;
+                    var y1 = 400 + Math.Sin(angle) * MaxRadius;
+                    var x2 = 400 + Math.Cos(angle) * (MaxRadius + 15);
+                    var y2 = 400 + Math.Sin(angle) * (MaxRadius + 15);
+
+                    <line x1="@x1" y1="@y1" x2="@x2" y2="@y2" stroke="#666" stroke-width="2" />
+
+                    var textX = 400 + Math.Cos(angle) * (MaxRadius + 30);
+                    var textY = 400 + Math.Sin(angle) * (MaxRadius + 30);
+                    <g>
+                        <text x="@textX" y="@textY" font-size="14" text-anchor="middle" dominant-baseline="middle" fill="#333">
+                            @date.ToString("MMM")
+                        </text>
+                    </g>
+                }
+
+                @* Legend - always visible *@
+                <g transform="translate(650, 50)">
+                    <rect x="0" y="0" width="140" height="60" fill="white" stroke="#ccc" stroke-width="1" />
+                    <line x1="10" y1="20" x2="40" y2="20" stroke="red" stroke-width="2" />
+                    <g><text x="45" y="24" font-size="12" fill="#333">Max Temp</text></g>
+                    <line x1="10" y1="40" x2="40" y2="40" stroke="blue" stroke-width="2" />
+                    <g><text x="45" y="44" font-size="12" fill="#333">Min Temp</text></g>
+                </g>
+
+                @* Loading spinner - show when loading *@
+                @if (isLoading)
+                {
+                    <g class="loading-spinner">
+                        <circle cx="400" cy="400" r="60" fill="none" stroke="#0277BD" stroke-width="6" opacity="0.2" />
+                        <circle cx="400" cy="400" r="60" fill="none" stroke="#0277BD" stroke-width="6"
+                                stroke-dasharray="280" stroke-dashoffset="210" stroke-linecap="round" opacity="0.8" />
+                    </g>
+                    <g>
+                        <text x="400" y="500" font-size="24" text-anchor="middle" fill="#0277BD" opacity="0.6">
+                            Loading...
+                        </text>
+                    </g>
+                }
+
+                @* Temperature data - show when loaded *@
+                @if (temperatureData != null && temperatureData.Any())
+                {
+                    var years = GetYears();
+
+                    @* Year display in center - small, fits in innermost circle *@
+                    <g>
+                        <text x="400" y="408"
+                              font-size="28"
+                              font-weight="600"
+                              text-anchor="middle"
+                              fill="#0277BD"
+                              opacity="0.5"
+                              class="year-text"
+                              key="@($"year-{animationKey}")">
+                            @GetDataYear()
+                        </text>
+                    </g>
+
+                    @* Temperature data points - one set per year *@
+                    @foreach (var year in years)
+                    {
+                        var opacity = GetOpacityForYear(year, years);
+                        var delay = GetAnimationDelayForYear(year, years);
+
+                        @* Max temperature for this year *@
+                        @if (showMaxTemp)
+                        {
+                            <path d="@GenerateMaxTempPathForYear(year)"
+                                  fill="none"
+                                  stroke="red"
+                                  stroke-width="2"
+                                  opacity="@opacity"
+                                  class="temp-path temp-path-max"
+                                  style="animation-delay: @(delay)s"
+                                  key="@($"max-{year}-{animationKey}")" />
+                        }
+
+                        @* Min temperature for this year *@
+                        @if (showMinTemp)
+                        {
+                            <path d="@GenerateMinTempPathForYear(year)"
+                                  fill="none"
+                                  stroke="blue"
+                                  stroke-width="2"
+                                  opacity="@opacity"
+                                  class="temp-path temp-path-min"
+                                  style="animation-delay: @(delay)s"
+                                  key="@($"min-{year}-{animationKey}")" />
+                        }
+                    }
+                }
+            </svg>
+        </div>
+
+        @if (temperatureData != null && temperatureData.Any())
+        {
+            <div style="display: flex; flex-direction: column; gap: 1rem;">
+                <div class="metadata-panel">
+                    <h5>Options</h5>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="showMaxTemp" @bind="showMaxTemp" />
+                        <label class="form-check-label" for="showMaxTemp">
+                            Show Max Temp
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="showMinTemp" @bind="showMinTemp" />
+                        <label class="form-check-label" for="showMinTemp">
+                            Show Min Temp
+                        </label>
+                    </div>
+                </div>
+
+                <div class="metadata-panel">
+                    <h5>Data Info</h5>
+                    <p><strong>City:</strong><br/>@loadedCity</p>
+                    <p><strong>Records:</strong><br/>@temperatureData.Count</p>
+                    <p><strong>Date Range:</strong><br/>@temperatureData.First().Date.ToString("yyyy-MM-dd")<br/>to<br/>@temperatureData.Last().Date.ToString("yyyy-MM-dd")</p>
+                </div>
             </div>
-        </div>
-
-        <div class="mt-3">
-            <p><strong>City:</strong> @loadedCity</p>
-            <p><strong>Records:</strong> @temperatureData.Count</p>
-            <p><strong>Date Range:</strong> @temperatureData.First().Date.ToString("yyyy-MM-dd") to @temperatureData.Last().Date.ToString("yyyy-MM-dd")</p>
-        </div>
-    }
+        }
+    </div>
 </div>
-
-@code {
-    private string city = "Paris";
-    private string loadedCity = "";
-    private bool isLoading = false;
-    private string? errorMessage = null;
-    private List<TemperatureRecord> temperatureData = new();
-
-    private const double CenterRadius = 50;
-    private const double MaxRadius = 300;
-    private const double MinTemp = -20;
-    private const double MaxTemp = 40;
-
-    protected override async Task OnInitializedAsync()
-    {
-        await LoadData();
-    }
-
-    private async Task LoadData()
-    {
-        if (string.IsNullOrWhiteSpace(city))
-        {
-            errorMessage = "Please enter a city name";
-            return;
-        }
-
-        isLoading = true;
-        errorMessage = null;
-        temperatureData.Clear();
-
-        try
-        {
-            var response = await Http.GetFromJsonAsync<ApiResponse>($"temperature/{Uri.EscapeDataString(city)}");
-
-            if (response?.Records != null)
-            {
-                temperatureData = response.Records.ToList();
-                loadedCity = response.City ?? city;
-            }
-        }
-        catch (Exception ex)
-        {
-            errorMessage = $"Error loading data: {ex.Message}";
-        }
-        finally
-        {
-            isLoading = false;
-        }
-    }
-
-    private double MapTemperatureToRadius(double temperature)
-    {
-        // Map temperature from [-20, 40] to [CenterRadius, MaxRadius]
-        var normalized = (temperature - MinTemp) / (MaxTemp - MinTemp);
-        return CenterRadius + (normalized * (MaxRadius - CenterRadius));
-    }
-
-    private (double x, double y) GetPointPosition(int dayOfYear, double temperature)
-    {
-        var angle = (dayOfYear / 365.0 * 360.0 - 90) * Math.PI / 180.0; // -90 to start at top (0 degrees)
-        var radius = MapTemperatureToRadius(temperature);
-
-        var x = 400 + Math.Cos(angle) * radius;
-        var y = 400 + Math.Sin(angle) * radius;
-
-        return (x, y);
-    }
-
-    private string GenerateMaxTempPath()
-    {
-        if (!temperatureData.Any()) return "";
-
-        var pathData = new System.Text.StringBuilder();
-
-        for (int i = 0; i < temperatureData.Count; i++)
-        {
-            var record = temperatureData[i];
-            var dayOfYear = record.Date.DayOfYear;
-            var (x, y) = GetPointPosition(dayOfYear, record.MaxTemperatureC);
-
-            if (i == 0)
-                pathData.Append($"M {x:F2} {y:F2}");
-            else
-                pathData.Append($" L {x:F2} {y:F2}");
-        }
-
-        return pathData.ToString();
-    }
-
-    private string GenerateMinTempPath()
-    {
-        if (!temperatureData.Any()) return "";
-
-        var pathData = new System.Text.StringBuilder();
-
-        for (int i = 0; i < temperatureData.Count; i++)
-        {
-            var record = temperatureData[i];
-            var dayOfYear = record.Date.DayOfYear;
-            var (x, y) = GetPointPosition(dayOfYear, record.MinTemperatureC);
-
-            if (i == 0)
-                pathData.Append($"M {x:F2} {y:F2}");
-            else
-                pathData.Append($" L {x:F2} {y:F2}");
-        }
-
-        return pathData.ToString();
-    }
-
-    private class ApiResponse
-    {
-        public string? City { get; set; }
-        public DateTime StartDate { get; set; }
-        public DateTime EndDate { get; set; }
-        public int RecordCount { get; set; }
-        public TemperatureRecord[]? Records { get; set; }
-    }
-
-    private class TemperatureRecord
-    {
-        public DateTime Date { get; set; }
-        public double MaxTemperatureC { get; set; }
-        public double MinTemperatureC { get; set; }
-        public int ProviderId { get; set; }
-    }
-}
