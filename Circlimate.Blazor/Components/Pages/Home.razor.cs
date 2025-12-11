@@ -21,6 +21,7 @@ public partial class Home : ComponentBase
     private bool showMaxTemp = true;
     private int currentAnimatedYear = 0;
     private string visualizationMode = "lines"; // "lines" or "dots"
+    private int dotsSampleRate = 7; // Show every 7th day in dots mode (weekly sampling)
 
     private const double CenterRadius = 50;
     private const double MaxRadius = 300;
@@ -44,32 +45,45 @@ public partial class Home : ComponentBase
 
         try
         {
-            Logger.LogInformation("Fetching data from API for {City}", city);
+            Logger.LogInformation("Fetching data from API for {City} with paging", city);
 
-            // Request all available historical data from Open-Meteo (1940-01-01 onwards)
+            // Request data in pages for smooth loading and rendering
             var endDate = DateTime.UtcNow.AddDays(-7);
             var startDate = new DateTime(1940, 1, 1);
+            var pageSize = 1000; // Fetch 1000 records at a time (about 3 years)
 
-            var response = await Http.GetFromJsonAsync<ApiResponse>(
-                $"temperature/{Uri.EscapeDataString(city)}?startDate={startDate:yyyy-MM-dd}&endDate={endDate:yyyy-MM-dd}");
+            // Fetch first page
+            var firstPage = await FetchPage(city, startDate, endDate, 1, pageSize);
 
-            Logger.LogInformation("Response received: {RecordCount} records", response?.RecordCount ?? 0);
-
-            if (response?.Records != null)
+            if (firstPage?.Records != null && firstPage.Records.Any())
             {
-                temperatureData = response.Records.ToList();
-                loadedCity = response.City ?? city;
+                // Add first page of data and start rendering immediately
+                temperatureData = firstPage.Records.ToList();
+                loadedCity = firstPage.City ?? city;
                 animationKey++; // Trigger animation restart
 
-                // Set initial year for animation
+                // Start year animation
                 var years = GetYears();
                 if (years.Any())
                 {
                     currentAnimatedYear = years.First();
-                    _ = AnimateYearLabels(years);
+                    _ = AnimateYearLabelsContinuous();
                 }
 
-                Logger.LogInformation("Data loaded successfully: {Count} records", temperatureData.Count);
+                StateHasChanged(); // Show first page immediately
+
+                Logger.LogInformation("First page loaded: {Count} records. Total: {Total}, HasNext: {HasNext}",
+                    firstPage.RecordCount, firstPage.TotalRecords, firstPage.HasNextPage);
+
+                // Pre-fetch remaining pages in background while animating
+                if (firstPage.HasNextPage)
+                {
+                    _ = FetchRemainingPagesAsync(city, startDate, endDate, pageSize, firstPage.TotalPages ?? 1);
+                }
+            }
+            else
+            {
+                errorMessage = "No data found for this city";
             }
         }
         catch (Exception ex)
@@ -82,6 +96,54 @@ public partial class Home : ComponentBase
             isLoading = false;
             StateHasChanged(); // Force UI update
         }
+    }
+
+    private async Task<ApiResponse?> FetchPage(string city, DateTime startDate, DateTime endDate, int page, int pageSize)
+    {
+        try
+        {
+            var url = $"temperature/{Uri.EscapeDataString(city)}?startDate={startDate:yyyy-MM-dd}&endDate={endDate:yyyy-MM-dd}&page={page}&pageSize={pageSize}";
+            var response = await Http.GetFromJsonAsync<ApiResponse>(url);
+            return response;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error fetching page {Page} for {City}", page, city);
+            return null;
+        }
+    }
+
+    private async Task FetchRemainingPagesAsync(string city, DateTime startDate, DateTime endDate, int pageSize, int totalPages)
+    {
+        for (int page = 2; page <= totalPages; page++)
+        {
+            try
+            {
+                Logger.LogInformation("Pre-fetching page {Page} of {Total}", page, totalPages);
+
+                var pageData = await FetchPage(city, startDate, endDate, page, pageSize);
+
+                if (pageData?.Records != null && pageData.Records.Any())
+                {
+                    // Append new data and update visualization
+                    temperatureData.AddRange(pageData.Records);
+
+                    await InvokeAsync(StateHasChanged);
+
+                    Logger.LogInformation("Page {Page} loaded: {Count} records. Total so far: {Total}",
+                        page, pageData.RecordCount, temperatureData.Count);
+                }
+
+                // Small delay to prevent UI blocking (allows animation to continue smoothly)
+                await Task.Delay(100);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Error fetching page {Page}", page);
+            }
+        }
+
+        Logger.LogInformation("All pages loaded. Total records: {Count}", temperatureData.Count);
     }
 
     private double MapTemperatureToRadius(double temperature)
@@ -152,18 +214,39 @@ public partial class Home : ComponentBase
         return currentAnimatedYear > 0 ? currentAnimatedYear.ToString() : GetYears().FirstOrDefault().ToString();
     }
 
-    private async Task AnimateYearLabels(List<int> years)
+    private async Task AnimateYearLabelsContinuous()
     {
-        // Update year label every 3 seconds to match animation timing
-        foreach (var year in years)
+        // Continuously update year label based on data as it loads
+        while (isLoading || temperatureData.Any())
         {
-            currentAnimatedYear = year;
-            await InvokeAsync(StateHasChanged);
-
-            // Wait 3 seconds before showing next year (matches animation delay)
-            if (year != years.Last())
+            var years = GetYears();
+            if (years.Any())
             {
-                await Task.Delay(3000);
+                // Cycle through years continuously
+                foreach (var year in years)
+                {
+                    currentAnimatedYear = year;
+                    await InvokeAsync(StateHasChanged);
+
+                    // Update year display smoothly (faster updates for continuous feel)
+                    await Task.Delay(500); // Update every 0.5 seconds
+
+                    // Stop if new data load starts
+                    if (!temperatureData.Any())
+                        break;
+                }
+            }
+            else
+            {
+                await Task.Delay(100);
+            }
+
+            // If data is fully loaded and we've shown all years, stop
+            if (!isLoading && years.Any())
+            {
+                currentAnimatedYear = years.Last();
+                await InvokeAsync(StateHasChanged);
+                break;
             }
         }
     }
@@ -185,6 +268,27 @@ public partial class Home : ComponentBase
             .Where(r => r.Date.Year == year)
             .OrderBy(r => r.Date.DayOfYear)
             .ToList();
+    }
+
+    private List<TemperatureRecord> GetSampledRecordsForYear(int year, int sampleRate)
+    {
+        // For dots mode: sample data to avoid rendering too many points
+        // e.g., sampleRate=7 means show every 7th day (weekly)
+        var yearRecords = temperatureData
+            .Where(r => r.Date.Year == year)
+            .OrderBy(r => r.Date)
+            .ToList();
+
+        if (sampleRate <= 1)
+            return yearRecords;
+
+        var sampledRecords = new List<TemperatureRecord>();
+        for (int i = 0; i < yearRecords.Count; i += sampleRate)
+        {
+            sampledRecords.Add(yearRecords[i]);
+        }
+
+        return sampledRecords;
     }
 
     private string GenerateMaxTempPathForYear(int year)
@@ -243,9 +347,8 @@ public partial class Home : ComponentBase
 
     private double GetAnimationDelayForYear(int year, List<int> allYears)
     {
-        var index = allYears.IndexOf(year);
-        // Each year takes 3 seconds, so delay is index * 3
-        return index * 3.0;
+        // No delay between years - continuous animation
+        return 0;
     }
 
     private class ApiResponse
@@ -254,6 +357,11 @@ public partial class Home : ComponentBase
         public DateTime StartDate { get; set; }
         public DateTime EndDate { get; set; }
         public int RecordCount { get; set; }
+        public int TotalRecords { get; set; }
+        public int CurrentPage { get; set; }
+        public int PageSize { get; set; }
+        public int? TotalPages { get; set; }
+        public bool HasNextPage { get; set; }
         public TemperatureRecord[]? Records { get; set; }
     }
 

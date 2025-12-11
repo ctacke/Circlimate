@@ -132,6 +132,29 @@
         transform-origin: center;
         transform-box: fill-box;
     }
+
+    @@keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: scale(0);
+        }
+        to {
+            opacity: 1;
+            transform: scale(1);
+        }
+    }
+
+    .temp-dot {
+        animation: fadeIn 0.3s ease-out forwards;
+        transform-origin: center;
+        transform-box: fill-box;
+    }
+
+    .temp-dot:hover {
+        r: 4;
+        stroke: white;
+        stroke-width: 1;
+    }
 </style>
 
 <div class="page-container">
@@ -244,35 +267,70 @@
                     </g>
 
                     @* Temperature data points - one set per year *@
-                    @foreach (var year in years)
+                    @if (visualizationMode == "lines")
                     {
-                        var opacity = GetOpacityForYear(year, years);
-                        var delay = GetAnimationDelayForYear(year, years);
-
-                        @* Max temperature for this year *@
-                        @if (showMaxTemp)
+                        @foreach (var year in years)
                         {
-                            <path d="@GenerateMaxTempPathForYear(year)"
-                                  fill="none"
-                                  stroke="red"
-                                  stroke-width="2"
-                                  opacity="@opacity"
-                                  class="temp-path temp-path-max"
-                                  style="animation-delay: @(delay)s"
-                                  key="@($"max-{year}-{animationKey}")" />
+                            var opacity = GetOpacityForYear(year, years);
+                            var delay = GetAnimationDelayForYear(year, years);
+
+                            @* Max temperature for this year *@
+                            @if (showMaxTemp)
+                            {
+                                <path d="@GenerateMaxTempPathForYear(year)"
+                                      fill="none"
+                                      stroke="red"
+                                      stroke-width="2"
+                                      opacity="@opacity"
+                                      class="temp-path temp-path-max"
+                                      style="animation-delay: @(delay)s"
+                                      key="@($"max-{year}-{animationKey}")" />
+                            }
+
+                            @* Min temperature for this year *@
+                            @if (showMinTemp)
+                            {
+                                <path d="@GenerateMinTempPathForYear(year)"
+                                      fill="none"
+                                      stroke="blue"
+                                      stroke-width="2"
+                                      opacity="@opacity"
+                                      class="temp-path temp-path-min"
+                                      style="animation-delay: @(delay)s"
+                                      key="@($"min-{year}-{animationKey}")" />
+                            }
                         }
-
-                        @* Min temperature for this year *@
-                        @if (showMinTemp)
+                    }
+                    else
+                    {
+                        @* Dots mode - render sampled points (every 7th day for performance) *@
+                        @foreach (var year in years)
                         {
-                            <path d="@GenerateMinTempPathForYear(year)"
-                                  fill="none"
-                                  stroke="blue"
-                                  stroke-width="2"
-                                  opacity="@opacity"
-                                  class="temp-path temp-path-min"
-                                  style="animation-delay: @(delay)s"
-                                  key="@($"min-{year}-{animationKey}")" />
+                            var opacity = GetOpacityForYear(year, years);
+                            var yearRecords = GetSampledRecordsForYear(year, dotsSampleRate);
+
+                            @foreach (var record in yearRecords)
+                            {
+                                var dayOfYear = record.Date.DayOfYear;
+
+                                @if (showMaxTemp)
+                                {
+                                    var maxPos = GetPointPosition(dayOfYear, record.MaxTemperatureC);
+                                    <circle cx="@maxPos.x" cy="@maxPos.y" r="2.5"
+                                            fill="red" opacity="@opacity"
+                                            class="temp-dot"
+                                            key="@($"max-dot-{year}-{dayOfYear}-{animationKey}")" />
+                                }
+
+                                @if (showMinTemp)
+                                {
+                                    var minPos = GetPointPosition(dayOfYear, record.MinTemperatureC);
+                                    <circle cx="@minPos.x" cy="@minPos.y" r="2.5"
+                                            fill="blue" opacity="@opacity"
+                                            class="temp-dot"
+                                            key="@($"min-dot-{year}-{dayOfYear}-{animationKey}")" />
+                                }
+                            }
                         }
                     }
                 }
@@ -284,17 +342,41 @@
             <div style="display: flex; flex-direction: column; gap: 1rem;">
                 <div class="metadata-panel">
                     <h5>Options</h5>
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="showMaxTemp" @bind="showMaxTemp" />
-                        <label class="form-check-label" for="showMaxTemp">
-                            Show Max Temp
-                        </label>
+
+                    <div class="mb-3">
+                        <strong>Visualization:</strong>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="vizMode" id="vizLines"
+                                   value="lines" checked="@(visualizationMode == "lines")"
+                                   @onchange="@(() => visualizationMode = "lines")" />
+                            <label class="form-check-label" for="vizLines">
+                                Lines
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="vizMode" id="vizDots"
+                                   value="dots" checked="@(visualizationMode == "dots")"
+                                   @onchange="@(() => visualizationMode = "dots")" />
+                            <label class="form-check-label" for="vizDots">
+                                Dots
+                            </label>
+                        </div>
                     </div>
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="showMinTemp" @bind="showMinTemp" />
-                        <label class="form-check-label" for="showMinTemp">
-                            Show Min Temp
-                        </label>
+
+                    <div>
+                        <strong>Series:</strong>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="showMaxTemp" @bind="showMaxTemp" />
+                            <label class="form-check-label" for="showMaxTemp">
+                                Show Max Temp
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="showMinTemp" @bind="showMinTemp" />
+                            <label class="form-check-label" for="showMinTemp">
+                                Show Min Temp
+                            </label>
+                        </div>
                     </div>
                 </div>
 

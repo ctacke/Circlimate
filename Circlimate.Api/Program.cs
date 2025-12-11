@@ -53,25 +53,41 @@ internal class Program
 
         app.UseHttpsRedirection();
 
-        app.MapGet("/temperature/{city}", async (string city, TemperatureDataService service, DateTime? startDate, DateTime? endDate) =>
+        app.MapGet("/temperature/{city}", async (string city, TemperatureDataService service, DateTime? startDate, DateTime? endDate, int? page, int? pageSize) =>
         {
             try
             {
                 var records = await service.GetDailyRecords(city, startDate, endDate);
-                var recordsList = records.ToList();
+                var recordsList = records.OrderBy(r => r.Date).ToList();
 
                 if (!recordsList.Any())
                 {
                     return Results.NotFound(new { message = $"No temperature data found for {city}" });
                 }
 
+                // Apply pagination if requested
+                var currentPage = page ?? 1;
+                var currentPageSize = pageSize ?? recordsList.Count; // Default: return all
+                var totalRecords = recordsList.Count;
+                var totalPages = (int)Math.Ceiling(totalRecords / (double)currentPageSize);
+
+                var pagedRecords = recordsList
+                    .Skip((currentPage - 1) * currentPageSize)
+                    .Take(currentPageSize)
+                    .ToList();
+
                 return Results.Ok(new
                 {
                     city,
                     startDate = startDate ?? new DateTime(1940, 1, 1),
                     endDate = endDate ?? DateTime.UtcNow.AddDays(-7),
-                    recordCount = recordsList.Count,
-                    records = recordsList.Select(r => new
+                    recordCount = pagedRecords.Count,
+                    totalRecords,
+                    currentPage,
+                    pageSize = currentPageSize,
+                    totalPages,
+                    hasNextPage = currentPage < totalPages,
+                    records = pagedRecords.Select(r => new
                     {
                         date = r.Date.ToString("yyyy-MM-dd"),
                         maxTemperatureC = r.MaxTemperature.Celsius,
