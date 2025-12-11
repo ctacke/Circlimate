@@ -6,4 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Circlimate.ServiceDefaults\Circlimate.ServiceDefaults.csproj" />
+  </ItemGroup>
+
 </Project>

@@ -2,9 +2,26 @@ using Circlimate.Blazor.Components;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Add service defaults & Aspire components.
+builder.AddServiceDefaults();
+
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+
+// Configure HttpClient for API communication
+builder.Services.AddHttpClient("api", client =>
+{
+    // This will be configured by Aspire service discovery
+    client.BaseAddress = new Uri("https+http://api");
+});
+
+// Add HttpClient for injection
+builder.Services.AddScoped(sp =>
+{
+    var factory = sp.GetRequiredService<IHttpClientFactory>();
+    return factory.CreateClient("api");
+});
 
 var app = builder.Build();
 

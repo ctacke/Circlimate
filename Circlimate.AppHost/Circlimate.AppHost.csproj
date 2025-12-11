@@ -15,6 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Circlimate.Api\Circlimate.Api.csproj" />
     <ProjectReference Include="..\Circlimate.Blazor\Circlimate.Blazor.csproj" />
   </ItemGroup>
 
