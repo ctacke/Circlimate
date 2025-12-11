@@ -68,7 +68,7 @@ internal class Program
                 return Results.Ok(new
                 {
                     city,
-                    startDate = startDate ?? DateTime.UtcNow.AddDays(-7).AddYears(-1),
+                    startDate = startDate ?? new DateTime(1940, 1, 1),
                     endDate = endDate ?? DateTime.UtcNow.AddDays(-7),
                     recordCount = recordsList.Count,
                     records = recordsList.Select(r => new
@@ -91,7 +91,7 @@ internal class Program
         })
         .WithName("GetTemperatureData")
         .WithOpenApi()
-        .WithDescription("Get historical temperature data for a city. Defaults to past year if dates not specified.");
+        .WithDescription("Get historical temperature data for a city. Defaults to all available data from 1940-01-01 if dates not specified.");
 
         app.Run();
     }

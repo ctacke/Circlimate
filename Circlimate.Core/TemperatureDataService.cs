@@ -25,9 +25,9 @@ public class TemperatureDataService
     {
         _logger?.LogInformation("Fetching temperature data for location: {Location}", location);
 
-        // Default to past year if dates not specified
+        // Default to maximum available historical data from Open-Meteo (1940-01-01)
         var end = endDate ?? DateTime.UtcNow.AddDays(-7);
-        var start = startDate ?? end.AddYears(-1);
+        var start = startDate ?? new DateTime(1940, 1, 1);
 
         // Check cache first if data store is available
         if (_dataStore != null)
@@ -55,39 +55,84 @@ public class TemperatureDataService
                 location, cachedList.Count, expectedDays, coveragePercentage);
         }
 
-        // Fetch from provider
-        _logger?.LogInformation("Fetching data from provider for {Location}", location);
-        var data = await _historyProvider.GetDailyRecords(location, start, end);
-        var dataList = data.ToList();
+        // Fetch from provider in decade chunks to respect API rate limits
+        _logger?.LogInformation("Fetching data from provider for {Location} in decade chunks", location);
 
-        // Store in cache if data store is available
-        if (_dataStore != null && dataList.Any())
+        var allData = new List<DailyRecord>();
+        var currentStart = start;
+
+        while (currentStart < end)
         {
+            // Request one decade at a time (or remaining period if less than a decade)
+            var currentEnd = currentStart.AddYears(10);
+            if (currentEnd > end)
+                currentEnd = end;
+
+            _logger?.LogInformation(
+                "Fetching decade chunk for {Location}: {Start:yyyy-MM-dd} to {End:yyyy-MM-dd}",
+                location, currentStart, currentEnd);
+
             try
             {
-                // Get location coordinates for storage
-                var geocoded = await _geocodeProvider.GetLocation(location);
+                var decadeData = await _historyProvider.GetDailyRecords(location, currentStart, currentEnd);
+                var decadeList = decadeData.ToList();
 
                 _logger?.LogInformation(
-                    "Storing {Count} records in cache for {Location} (lat={Lat:F5}, lon={Lon:F5})",
-                    dataList.Count, location, geocoded.Latitiude, geocoded.Longitude);
+                    "Retrieved {Count} records for decade {Start:yyyy} - {End:yyyy}",
+                    decadeList.Count, currentStart.Year, currentEnd.Year);
 
-                await _dataStore.StoreDailyRecordsAsync(
-                    location,
-                    geocoded.Latitiude,
-                    geocoded.Longitude,
-                    dataList);
+                allData.AddRange(decadeList);
 
-                _logger?.LogInformation("Successfully cached {Count} records for {Location}", dataList.Count, location);
+                // Store decade in cache immediately if data store is available
+                if (_dataStore != null && decadeList.Any())
+                {
+                    try
+                    {
+                        // Get location coordinates for storage (cache this for efficiency)
+                        var geocoded = await _geocodeProvider.GetLocation(location);
+
+                        await _dataStore.StoreDailyRecordsAsync(
+                            location,
+                            geocoded.Latitiude,
+                            geocoded.Longitude,
+                            decadeList);
+
+                        _logger?.LogInformation(
+                            "Successfully cached {Count} records for decade {Start:yyyy} - {End:yyyy}",
+                            decadeList.Count, currentStart.Year, currentEnd.Year);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogWarning(ex, "Failed to cache decade data for {Location}. Continuing.", location);
+                    }
+                }
+
+                // Add a small delay between decade requests to be respectful of API rate limits
+                if (currentEnd < end)
+                {
+                    _logger?.LogDebug("Waiting 1 second before next decade request...");
+                    await Task.Delay(1000);
+                }
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "Failed to cache data for {Location}. Continuing with provider data.", location);
-                // Don't fail the request if caching fails - just continue with provider data
+                _logger?.LogError(ex, "Error fetching decade {Start:yyyy} - {End:yyyy} for {Location}",
+                    currentStart.Year, currentEnd.Year, location);
+
+                // If we get a rate limit error, stop requesting more data
+                if (ex.Message.Contains("429") || ex.Message.Contains("rate limit"))
+                {
+                    _logger?.LogWarning("Rate limit encountered. Stopping decade requests and returning partial data.");
+                    break;
+                }
+
+                throw;
             }
+
+            currentStart = currentEnd.AddDays(1);
         }
 
-        _logger?.LogInformation("Retrieved {Count} records for {Location} from provider", dataList.Count, location);
-        return dataList;
+        _logger?.LogInformation("Retrieved {Count} total records for {Location} from provider", allData.Count, location);
+        return allData;
     }
 }

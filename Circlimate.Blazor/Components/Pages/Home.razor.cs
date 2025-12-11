@@ -19,6 +19,8 @@ public partial class Home : ComponentBase
     private int animationKey = 0;
     private bool showMinTemp = true;
     private bool showMaxTemp = true;
+    private int currentAnimatedYear = 0;
+    private string visualizationMode = "lines"; // "lines" or "dots"
 
     private const double CenterRadius = 50;
     private const double MaxRadius = 300;
@@ -44,9 +46,9 @@ public partial class Home : ComponentBase
         {
             Logger.LogInformation("Fetching data from API for {City}", city);
 
-            // Request 5 years of data
+            // Request all available historical data from Open-Meteo (1940-01-01 onwards)
             var endDate = DateTime.UtcNow.AddDays(-7);
-            var startDate = endDate.AddYears(-5);
+            var startDate = new DateTime(1940, 1, 1);
 
             var response = await Http.GetFromJsonAsync<ApiResponse>(
                 $"temperature/{Uri.EscapeDataString(city)}?startDate={startDate:yyyy-MM-dd}&endDate={endDate:yyyy-MM-dd}");
@@ -58,6 +60,15 @@ public partial class Home : ComponentBase
                 temperatureData = response.Records.ToList();
                 loadedCity = response.City ?? city;
                 animationKey++; // Trigger animation restart
+
+                // Set initial year for animation
+                var years = GetYears();
+                if (years.Any())
+                {
+                    currentAnimatedYear = years.First();
+                    _ = AnimateYearLabels(years);
+                }
+
                 Logger.LogInformation("Data loaded successfully: {Count} records", temperatureData.Count);
             }
         }
@@ -137,12 +148,24 @@ public partial class Home : ComponentBase
     {
         if (!temperatureData.Any()) return "";
 
-        var years = GetYears();
-        if (years.Count == 1)
-            return years[0].ToString();
+        // Return the currently animated year
+        return currentAnimatedYear > 0 ? currentAnimatedYear.ToString() : GetYears().FirstOrDefault().ToString();
+    }
 
-        // Show year range
-        return $"{years.First()}-{years.Last()}";
+    private async Task AnimateYearLabels(List<int> years)
+    {
+        // Update year label every 3 seconds to match animation timing
+        foreach (var year in years)
+        {
+            currentAnimatedYear = year;
+            await InvokeAsync(StateHasChanged);
+
+            // Wait 3 seconds before showing next year (matches animation delay)
+            if (year != years.Last())
+            {
+                await Task.Delay(3000);
+            }
+        }
     }
 
     private List<int> GetYears()

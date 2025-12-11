@@ -39,16 +39,20 @@ public class PostgresTemperatureDataStore : ITemperatureDataStore
     {
         try
         {
+            // Ensure dates are UTC for PostgreSQL compatibility
+            var startDateUtc = DateTime.SpecifyKind(startDate.Date, DateTimeKind.Utc);
+            var endDateUtc = DateTime.SpecifyKind(endDate.Date, DateTimeKind.Utc);
+
             _logger?.LogDebug(
                 "Retrieving cached records for {Location} from {StartDate:yyyy-MM-dd} to {EndDate:yyyy-MM-dd}",
-                location, startDate, endDate);
+                location, startDateUtc, endDateUtc);
 
             var records = await _context.TemperatureData
                 .AsNoTracking()
                 .Include(td => td.City)
                 .Where(td => td.City.CityName == location
-                          && td.RecordDate >= startDate.Date
-                          && td.RecordDate <= endDate.Date)
+                          && td.RecordDate >= startDateUtc
+                          && td.RecordDate <= endDateUtc)
                 .OrderBy(td => td.RecordDate)
                 .Select(td => new DailyRecord
                 {
@@ -125,23 +129,35 @@ public class PostgresTemperatureDataStore : ITemperatureDataStore
                     city.LastUpdatedUtc = DateTime.UtcNow;
                 }
 
-                // Insert temperature records (EF Core will ignore duplicates due to unique constraint)
+                // Load existing records for this city into memory once (much faster than 30k+ individual queries)
+                var existingRecords = await _context.TemperatureData
+                    .Where(td => td.CityId == city.CityId)
+                    .Select(td => new { td.RecordDate, td.ProviderId })
+                    .ToListAsync();
+
+                // Create a HashSet for O(1) duplicate checking
+                var existingKeys = new HashSet<(DateTime, int)>(
+                    existingRecords.Select(r => (r.RecordDate, r.ProviderId)));
+
+                _logger?.LogDebug(
+                    "Found {ExistingCount} existing records for city {CityId}",
+                    existingRecords.Count, city.CityId);
+
+                // Build list of new records, checking against HashSet
                 var newRecords = new List<TemperatureDataEntity>();
 
                 foreach (var record in recordsList)
                 {
-                    // Check if record already exists
-                    var exists = await _context.TemperatureData
-                        .AnyAsync(td => td.CityId == city.CityId
-                                     && td.RecordDate == record.Date.Date
-                                     && td.ProviderId == record.ProviderId);
+                    // Ensure date is UTC for PostgreSQL compatibility
+                    var recordDateUtc = DateTime.SpecifyKind(record.Date.Date, DateTimeKind.Utc);
 
-                    if (!exists)
+                    // Check if record already exists (O(1) lookup in HashSet)
+                    if (!existingKeys.Contains((recordDateUtc, record.ProviderId)))
                     {
                         newRecords.Add(new TemperatureDataEntity
                         {
                             CityId = city.CityId,
-                            RecordDate = record.Date.Date,
+                            RecordDate = recordDateUtc,
                             MaxTemperatureC = record.MaxTemperature.Celsius,
                             MinTemperatureC = record.MinTemperature.Celsius,
                             ProviderId = record.ProviderId,
