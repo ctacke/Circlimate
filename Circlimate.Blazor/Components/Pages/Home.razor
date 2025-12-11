@@ -79,9 +79,9 @@
     }
 
     .temp-path {
-        stroke-dasharray: 5000;
-        stroke-dashoffset: 5000;
-        animation: drawPath 3s ease-out forwards;
+        stroke-dasharray: 1000;
+        stroke-dashoffset: 1000;
+        animation: drawPath 0.15s linear forwards;
     }
 
     .temp-path-max {
@@ -189,8 +189,10 @@
     </div>
 
     <div class="chart-container">
-        <div class="chart-wrapper">
-            <svg viewBox="0 0 800 800" preserveAspectRatio="xMidYMid meet" style="background: rgba(255, 255, 255, 0.95); border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);">
+        @if (visualizationMode == "lines")
+        {
+            <div class="chart-wrapper">
+                <svg viewBox="0 0 800 800" preserveAspectRatio="xMidYMid meet" style="background: rgba(255, 255, 255, 0.95); border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);">
                 @* Temperature circles (grid lines) - always visible *@
                 @for (int temp = -20; temp <= 40; temp += 10)
                 {
@@ -266,13 +268,14 @@
                         </text>
                     </g>
 
-                    @* Temperature data points - one set per year *@
+                    @* Temperature data - per-year paths with sequential animation *@
                     @if (visualizationMode == "lines")
                     {
                         @foreach (var year in years)
                         {
+                            var yearIndex = years.IndexOf(year);
                             var opacity = GetOpacityForYear(year, years);
-                            var delay = GetAnimationDelayForYear(year, years);
+                            var animationDelay = GetSequentialAnimationDelay(yearIndex);
 
                             @* Max temperature for this year *@
                             @if (showMaxTemp)
@@ -283,7 +286,7 @@
                                       stroke-width="2"
                                       opacity="@opacity"
                                       class="temp-path temp-path-max"
-                                      style="animation-delay: @(delay)s"
+                                      style="animation-delay: @(animationDelay)s"
                                       key="@($"max-{year}-{animationKey}")" />
                             }
 
@@ -296,7 +299,7 @@
                                       stroke-width="2"
                                       opacity="@opacity"
                                       class="temp-path temp-path-min"
-                                      style="animation-delay: @(delay)s"
+                                      style="animation-delay: @(animationDelay)s"
                                       key="@($"min-{year}-{animationKey}")" />
                             }
                         }
@@ -336,57 +339,144 @@
                 }
             </svg>
         </div>
+        }
 
-        @if (temperatureData != null && temperatureData.Any())
+        @if (visualizationMode == "dots")
         {
-            <div style="display: flex; flex-direction: column; gap: 1rem;">
-                <div class="metadata-panel">
-                    <h5>Options</h5>
+            <div class="chart-wrapper">
+                <div style="position: relative; width: 800px; height: 800px; background: rgba(255, 255, 255, 0.95); border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);">
+                    @if (temperatureData != null && temperatureData.Any())
+                    {
+                        @* Background canvas: holds faded previous years *@
+                        <canvas id="backgroundCanvas" width="800" height="800"
+                                style="position: absolute; top: 0; left: 0; z-index: 1;"></canvas>
 
-                    <div class="mb-3">
-                        <strong>Visualization:</strong>
-                        <div class="form-check">
-                            <input class="form-check-input" type="radio" name="vizMode" id="vizLines"
-                                   value="lines" checked="@(visualizationMode == "lines")"
-                                   @onchange="@(() => visualizationMode = "lines")" />
-                            <label class="form-check-label" for="vizLines">
-                                Lines
-                            </label>
+                        @* Foreground canvas: draws current year *@
+                        <canvas id="foregroundCanvas" width="800" height="800"
+                                style="position: absolute; top: 0; left: 0; z-index: 2;"></canvas>
+                    }
+
+                    @* Overlay SVG: grid, month markers, legend (always visible in dots mode) *@
+                    <svg viewBox="0 0 800 800" style="position: absolute; top: 0; left: 0; z-index: 3; pointer-events: none;">
+                        @* Temperature circles (grid lines) *@
+                        @for (int temp = -20; temp <= 40; temp += 10)
+                        {
+                            var radius = MapTemperatureToRadius(temp);
+                            <circle cx="400" cy="400" r="@radius" fill="none" stroke="#ddd" stroke-width="1" />
+                            <g>
+                                <text x="405" y="@(400 - radius + 5)" font-size="12" fill="#666">@(temp)°C</text>
+                            </g>
+                        }
+
+                        @* Month markers *@
+                        @for (int month = 1; month <= 12; month++)
+                        {
+                            var date = new DateTime(DateTime.Now.Year, month, 1);
+                            var dayOfYear = date.DayOfYear;
+                            var angle = (dayOfYear / 365.0 * 360.0 - 90) * Math.PI / 180.0;
+                            var x1 = 400 + Math.Cos(angle) * MaxRadius;
+                            var y1 = 400 + Math.Sin(angle) * MaxRadius;
+                            var x2 = 400 + Math.Cos(angle) * (MaxRadius + 15);
+                            var y2 = 400 + Math.Sin(angle) * (MaxRadius + 15);
+
+                            <line x1="@x1" y1="@y1" x2="@x2" y2="@y2" stroke="#666" stroke-width="2" />
+
+                            var textX = 400 + Math.Cos(angle) * (MaxRadius + 30);
+                            var textY = 400 + Math.Sin(angle) * (MaxRadius + 30);
+                            <g>
+                                <text x="@textX" y="@textY" font-size="14" text-anchor="middle" dominant-baseline="middle" fill="#333">
+                                    @date.ToString("MMM")
+                                </text>
+                            </g>
+                        }
+
+                        @* Legend *@
+                        <g transform="translate(650, 50)">
+                            <rect x="0" y="0" width="140" height="60" fill="white" stroke="#ccc" stroke-width="1" />
+                            <line x1="10" y1="20" x2="40" y2="20" stroke="red" stroke-width="2" />
+                            <g><text x="45" y="24" font-size="12" fill="#333">Max Temp</text></g>
+                            <line x1="10" y1="40" x2="40" y2="40" stroke="blue" stroke-width="2" />
+                            <g><text x="45" y="44" font-size="12" fill="#333">Min Temp</text></g>
+                        </g>
+                    </svg>
+
+                    @if (temperatureData != null && temperatureData.Any())
+                    {
+                        @* Year label - positioned absolutely on top of canvas *@
+                        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 4; pointer-events: none;">
+                            <div style="font-size: 28px; font-weight: 600; color: #0277BD; opacity: 0.5; text-align: center;">
+                                @GetDataYear()
+                            </div>
                         </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="radio" name="vizMode" id="vizDots"
-                                   value="dots" checked="@(visualizationMode == "dots")"
-                                   @onchange="@(() => visualizationMode = "dots")" />
-                            <label class="form-check-label" for="vizDots">
-                                Dots
-                            </label>
-                        </div>
+                    }
+                </div>
+            </div>
+        }
+
+        <div style="display: flex; flex-direction: column; gap: 1rem;">
+            <div class="metadata-panel">
+                <h5>Options</h5>
+
+                <div class="mb-3">
+                    <strong>Visualization:</strong>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="vizMode" id="vizLines"
+                               value="lines" checked="@(visualizationMode == "lines")"
+                               @onchange="@(async () => await OnVisualizationModeChanged("lines"))" />
+                        <label class="form-check-label" for="vizLines">
+                            Lines
+                        </label>
                     </div>
-
-                    <div>
-                        <strong>Series:</strong>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="showMaxTemp" @bind="showMaxTemp" />
-                            <label class="form-check-label" for="showMaxTemp">
-                                Show Max Temp
-                            </label>
-                        </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="showMinTemp" @bind="showMinTemp" />
-                            <label class="form-check-label" for="showMinTemp">
-                                Show Min Temp
-                            </label>
-                        </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="vizMode" id="vizDots"
+                               value="dots" checked="@(visualizationMode == "dots")"
+                               @onchange="@(async () => await OnVisualizationModeChanged("dots"))" />
+                        <label class="form-check-label" for="vizDots">
+                            Dots (Canvas)
+                        </label>
                     </div>
                 </div>
 
+                <div class="mb-3">
+                    <label for="animSpeed" class="form-label">
+                        <strong>Canvas Speed:</strong> @(animationDelayMs)ms/year
+                    </label>
+                    <input type="range" class="form-range" id="animSpeed"
+                           min="100" max="5000" step="100"
+                           @bind="animationDelayMs" @bind:event="oninput" />
+                    <small class="text-muted">Fast (0.1s) ← → Slow (5s)</small>
+                </div>
+
+                <div>
+                    <strong>Temperature:</strong>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="tempSeries" id="showMaxTemp"
+                               checked="@showMaxTemp"
+                               @onchange="@(() => OnTempSeriesChanged(true))" />
+                        <label class="form-check-label" for="showMaxTemp">
+                            Max Temp
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="tempSeries" id="showMinTemp"
+                               checked="@showMinTemp"
+                               @onchange="@(() => OnTempSeriesChanged(false))" />
+                        <label class="form-check-label" for="showMinTemp">
+                            Min Temp
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            @if (temperatureData != null && temperatureData.Any())
+            {
                 <div class="metadata-panel">
                     <h5>Data Info</h5>
                     <p><strong>City:</strong><br/>@loadedCity</p>
                     <p><strong>Records:</strong><br/>@temperatureData.Count</p>
                     <p><strong>Date Range:</strong><br/>@temperatureData.First().Date.ToString("yyyy-MM-dd")<br/>to<br/>@temperatureData.Last().Date.ToString("yyyy-MM-dd")</p>
                 </div>
-            </div>
-        }
+            }
+        </div>
     </div>
 </div>
