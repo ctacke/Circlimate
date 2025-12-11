@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Circlimate.Core\Circlimate.Core.csproj" />
+    <ProjectReference Include="..\Circlimate.Data\Circlimate.Data.csproj" />
   </ItemGroup>
 
 </Project>

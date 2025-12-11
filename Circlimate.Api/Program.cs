@@ -1,4 +1,6 @@
 using Circlimate.Core;
+using Circlimate.Data;
+using Microsoft.EntityFrameworkCore;
 
 internal class Program
 {
@@ -11,12 +13,36 @@ internal class Program
         builder.Services.AddEndpointsApiExplorer();
         builder.Services.AddSwaggerGen();
 
+        // Register PostgreSQL DbContext
+        builder.Services.AddDbContext<CirclimateDbContext>(options =>
+            options.UseNpgsql(builder.Configuration.GetConnectionString("CirclimateDb")));
+
         // Register Circlimate services
         builder.Services.AddSingleton<IGeocodeProvider, MeteoGeocodeProvider>();
         builder.Services.AddSingleton<ITemperatureHistoryProvider, OpenMeteoTemperatureHistoryProvider>();
+        builder.Services.AddScoped<ITemperatureDataStore, PostgresTemperatureDataStore>();
         builder.Services.AddScoped<TemperatureDataService>();
 
         var app = builder.Build();
+
+        // Apply database migrations automatically on startup
+        using (var scope = app.Services.CreateScope())
+        {
+            var services = scope.ServiceProvider;
+            try
+            {
+                var context = services.GetRequiredService<CirclimateDbContext>();
+                context.Database.Migrate();
+                var logger = services.GetService<ILogger<Program>>();
+                logger?.LogInformation("Database migrations applied successfully");
+            }
+            catch (Exception ex)
+            {
+                var logger = services.GetService<ILogger<Program>>();
+                logger?.LogError(ex, "An error occurred while applying database migrations");
+                throw;
+            }
+        }
 
         // Configure the HTTP request pipeline.
         if (app.Environment.IsDevelopment())
